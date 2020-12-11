@@ -1,0 +1,295 @@
+---
+title: "Immune Checkpoint Inhibitor Hepatitis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview and Related Work
+
+Cancer treatment has been revolutionized in the last decade by the introduction of immune checkpoint inhibitors (ICIs), which work to prevent tumor cells from evading T-cell mediated immune defenses. However, ICI therapy is complicated by the frequent occurrence of immune-related adverse events (irAEs), off-target inflammatory responses that can affect almost any organ system including commonly the gastrointestinal tract and liver. ICI use is rapidly expanding since its introduction less than a decade ago; in 2018, 44% of cancer patients in the United States were eligible for ICI treatment, and in 2020 alone, the FDA has approved different ICI-containing regimens for over a dozen new indications. Total costs for inpatient admissions due to iRAEs rose six-fold from 2011 to 2016, and between 5-11% of all ICI-treated patients require admission for workup and management of irAEs. The rapid expansion of ICI use will substantially increase the incidence of ICI hepatitis, which is one of the most common irAEs. Approximately 10% of ICI-treated patients develop elevated liver enzymes of any degree, and 1-2% will experience grade 3 (liver enzyme elevations >5 times the upper limit of normal) or higher ICI hepatitis.
+
+Standard management of grade 3-4 ICI hepatitis involves discontinuation of ICI therapy and initiation of high-dose systemic corticosteroids (1-2 mg/kg/day). Some patients develop hepatitis that does not improve solely with steroid treatment. This is known as **steroid-refractory ICI hepatitis** and these patients generally receive additional immunosuppressive agents like mycophenolate mofetil, azathioprine, or tacrolimus. However, this is based on expert consensus and experience from clinical trials as the current literature consists of case reports describing efficacy of these immunosuppressive agents. The lack of existing data is highly concerning because high-grade ICI hepatitis can lead to mortality from fulminant liver failure; deaths attributable to irAEs occur in up to 1% of ICI hepatitis patients accounting for approximately 20% of fatal irAEs. Furthermore, even in patients who recover from their ICI hepatitis, those who experience prolonged liver injury are likely to require permanent discontinuation of potentially life-saving ICI therapy per oncology society guidelines. **Because there are extremely limited data regarding the diagnosis, management, and outcomes of steroid-refractory ICI hepatitis, a unique opportunity exists to address this knowledge gap.**
+
+### Motivation
+
+As gastroenterology fellows at the Brigham and Women's Hospital, we are frequently consulted to assist with diagnosis and management of ICI hepatitis, particularly due to the high volume of cancer patients admitted to our hospital through the Dana-Farber Cancer Institute. Our interest in addressing the aforementioned knowledge gap was the inspiration for this study. To do this, we designed a retrospective cohort study of all cancer patients (excluding those with hepatocellular carcinoma, or liver cancer) treated at the Dana-Farber Cancer Institute and the Mass General Cancer Center between 2010 and 2020 who developed high-grade (grade ≥3) ICI hepatitis. 
+
+
+## Initial Questions
+Our objective was to characterize clinical outcomes and develop a prediction model to guide management of steroid-refractory ICI hepatitis. The following were our specific aims:
+
+* Aim 1: **Characterize and compare the clinical outcomes of steroid-responsive and steroid-refractory ICI hepatitis**, including time to remission (defined as normalization of liver enzymes) and time to death. *Hypothesis 1: Patients with steroid-refractory ICI hepatitis experience worse clinical outcomes such as longer time to remission than those with steroid-responsive disease.*
+
+* Aim 2: **Develop and internally validate a prediction model** using a priori candidate variables (e.g., rate of improvement of liver enzymes, gender, pre-existing liver disease, liver metastases, checkpoint inhibitor class, alcohol use, history of prior irAEs) **to predict development of steroid-refractory ICI hepatitis** that can be used as a clinical decision-making guide to prompt initiation of additional immunosuppressive agents. *Hypothesis 2: Readily-available clinical data can be incorporated into a model to allow for early prediction of steroid-refractory disease.*
+
+While Aim 1 was well-defined prior to the start of our study, Aim 2 evolved the most during this class. Initially we had set out to simply identify risk factors associated with steroid-refractory disease but the machine learning segment of the course inspired us to try to build and validate a prediction model instead.
+
+```{r, echo=FALSE}
+library(haven)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(lubridate)
+library(pastecs)
+library(glmnet)
+library(pROC)
+library(epitools)
+library(caret)
+```
+
+## Data
+Our data is unique and not publicly-available as it is data that we collected ourselves through chart review of patients identified through the Mass General Brigham data warehouse. We constructed a database for our 191 patients and reviewed electronic medical records to collect data on baseline demographics, clinical parameters, and laboratory values at the time of initiation of ICI therapy. We also collected additional lab data at the time of diagnosis of high-grade ICI hepatitis and at the time of peak ALT (a liver enzyme that is released by damaged liver cells and is elevated when there is liver injury/inflammation). Our data, which was previously imported into SAS from an Excel file, was saved in the SAS format and was read into R directly from that format as follows:
+
+```{r}
+ici <- read_sas("icicombined.sas7bdat")
+head(ici)
+```
+
+Luckily, as we ourselves collected this data, it was already tidy and ready to be used for analysis.
+
+## Exploratory Analysis 
+
+```{r}
+# Summary statistics for sex, age, and follow-up time
+summary(ici$male_sex)
+stat.desc(ici$age)
+summary(ici$timetolastfu)
+
+# Proportion of patients who died during the study
+death <- table(ici$death)
+death
+prop.table(death)
+
+# Types of cancers that patients had in the study
+cancer <- table(ici$cancer)
+cancer
+prop.table(cancer)
+
+
+
+```
+**In our study, 51.3% of patients were male, with a mean age of 59.5 +/- 15.0 years and a median length of follow-up of 524 (IQR 244-976) days. 80 patients (41.9%) died during the study period. We see that there appears to be a large proportion of melanoma patients compared to other types of cancers. In fact, the majority of the patients in our study (53.9%) had melanoma. This is unsurprising as ICIs have been FDA-approved for melanoma longer than any other malignancy.**
+
+```{r}
+# Contingency tables, Chi-square tests, and relative risks comparing steroid-refractory and steroid-responsive patients
+riskratio(table(ici$refractory, ici$male_sex)) # Comparing proportion of male patients
+
+riskratio(table(ici$refractory, ici$white)) # Comparing proportion of white patients
+
+riskratio(table(ici$refractory, ici$liverdisease)) # Comparing proportion of patients with pre-existing liver disease
+
+riskratio(table(ici$refractory, ici$livermets)) # Comparing proportion of patients with liver metastases
+
+```
+**In general, we found that baseline characteristics comparing steroid-refractory and steroid-responsive patients were generally similar, with no significant differences in sex, ethnicity, or pre-existing liver disease. A notable exception was liver metastases; the patients with steroid-refractory disease were significantly more likely to have liver metastases at baseline than patients with steroid-responsive disease (37.7% vs 22.5%, relative risk 1.68, 95% CI 1.06-2.67, p=0.033). This is an important finding as we would not be surprised if patients who already have underlying liver problems (such as liver metastases) may experience more severe liver injury if they develop ICI hepatitis. Presence of liver metastases is going to be included later in our prediction modeling along with other a priori covariates that may predispose patients to having worse liver injury.**
+
+```{r}
+# Comparing baseline and peak liver enzyme values
+t.test(ici$ALTb~ici$refractory)
+t.test(ici$ASTb~ici$refractory)
+
+t.test(ici$ALTp~ici$refractory)
+t.test(ici$ASTp~ici$refractory)
+```
+
+**Here we are examining liver test values. Alanine aminotransferase (ALT) and aspartate aminotransferase (AST) are liver enzymes that are part of routine blood panels and are elevated when the liver is injured or inflamed. ALT is more specific to the liver, as the enzyme AST is found in many more extrahepatic organs than ALT. There is no difference in baseline AST or ALT between steroid-refractory and steroid-responsive patients, but steroid-refractory patients have a significantly higher mean peak ALT (798 U/L vs 508 U/L, p=0.001). This is compatible with the idea that steroid-refractory ICI hepatitis patients experience more severe liver injury.**
+
+
+```{r}
+# Boxplot of peak ALT comparing steroid-refractory and steroid-responsive patients
+ici %>% ggplot(aes(x=as.factor(refractory), y=ALTp)) +
+  geom_boxplot() +
+  xlab("Steroid-responsive (0) or steroid-refractory (1)") +
+  ylab("Peak ALT (U/L)")
+```
+
+**Here is a graphical representation of peak ALT. As we see below, ALT is a very important liver test that is monitored in ICI hepatitis patients and is used to determine if patients are improving, including when patients have "recovered" from their hepatitis (aka hepatitis remission).**
+
+## Final Analysis
+
+**Our first specific aim was to evaluate clinical outcomes in ICI hepatitis comparing steroid-refractory versus steroid-responsive disease. One important clinical outcome is hepatitis remission (defined as ALT normalization); ALT improvement to less than 100 U/L is also used clinically to determine when patients can resume cancer treatment. Here, we have produced Kaplan-Meier curves comparing the two groups with the outcomes of time to hepatitis remission and time to ALT improvement to <100 U/L.**
+
+```{r}
+# Kaplan-Meier curves, time to hepatitis remission or ALT improvement to <100 U/L
+km_timetonormal_refractory <- survfit(Surv(timetonormal, normalization) ~ refractory, data=ici)
+
+km_timetonormal_refractory
+
+ggsurvplot(km_timetonormal_refractory, data=ici,
+           pval=TRUE, # Add log-rank p-value to plot
+           risk.table=TRUE, # Add risk table to plot
+           xlab="Time to Hepatitis Remission (days)",
+           risk.table.y.text=FALSE, # Show bars instead of names in risk table legend
+           legend.labs=c("Steroid-Responsive", "Steroid-Refractory")) # Change legend labels
+
+km_timetoG1_refractory <- survfit(Surv(timetoG1, G1improvement) ~ refractory, data=ici)
+
+km_timetoG1_refractory 
+
+ggsurvplot(km_timetoG1_refractory, data=ici,
+           pval=TRUE,
+           risk.table=TRUE,
+           xlab="Time to ALT improvement to <100 U/L (days)",
+           risk.table.y.text=FALSE,
+           legend.labs=c("Steroid-Responsive", "Steroid-Refractory"))
+```
+
+**We see that for both outcomes, the KM curves distinctly separate, and the log-rank p-values displayed on each plot tell us that the steroid-refractory patient had significantly longer time to hepatitis remission (median of 45 vs 25 days, log-rank p=0.001) and significantly longer time to ALT<100 U/L (median of 27 vs 14 days, log-rank p<0.001).**
+
+**Next, we adjusted for potential confounders in the time-to-event analysis using Cox regression. Presence of liver metastases was included as steroid-refractory patients were significantly more likely to have liver mets (see above); other covariates that were included based on a priori knowledge were alcohol use, pre-existing liver disease, and type of ICI therapy.**
+
+
+```{r}
+# Cox regression, time to hepatitis remission or ALT improvement to <100 U/L
+cox_timetonormal_refractory <- coxph(Surv(timetonormal, normalization) ~
+                                       refractory +
+                                       liverdisease +
+                                       EtOH +
+                                       combinationtherapy +
+                                       livermets, data=ici)
+summary(cox_timetonormal_refractory)
+
+cox_timetog1_refractory <- coxph(Surv(timetoG1, G1improvement) ~
+                                   refractory +
+                                   liverdisease +
+                                   EtOH +
+                                   combinationtherapy +
+                                   livermets, data=ici)
+
+summary(cox_timetog1_refractory)
+
+```
+
+**We see that even after adjusting for potential confounders that might affect severity of liver injury and/or the ability of the liver to recover, steroid-refractory patients still have significantly longer time to remission (HR 0.64, 95% CI 0.45-0.89, p=0.009) and significantly longer time to ALT<100 U/L (HR 0.52, 95% CI 0.37-0.73, p<0.001).**
+
+**Another outcome that is relevant is time to all-cause death. For this, we restricted the analysis to patients with melanoma (our largest cancer subgroup) as survival should not be compared across different types of cancers.**
+
+```{r}
+# Kaplan-Meier curves, time to hepatitis remission or ALT improvement to <100 U/L
+
+ici_melanoma <- ici %>% filter(melanoma==1)
+
+km_timetodeath <- survfit(Surv(timetolastfu, death) ~ refractory, data=ici_melanoma)
+
+km_timetodeath
+
+ggsurvplot(km_timetodeath, data=ici_melanoma,
+           pval=TRUE, # Add log-rank p-value to plot
+           risk.table=TRUE, # Add risk table to plot
+           xlab="Days to All-Cause Death, Melanoma Patients",
+           risk.table.y.text=FALSE, # Show bars instead of names in risk table legend
+           legend.labs=c("Steroid-Responsive", "Steroid-Refractory")) # Change legend labels
+```
+
+**We see here that the survival curves for the steroid-responsive and steroid-refractory melanoma patients appear to overlap, and indeed there is no significant difference between the two groups in terms of time to death based on log-rank testing.**
+
+```{r}
+cox_timetodeath <- coxph(Surv(timetolastfu, death) ~
+                                       refractory +
+                                       age +
+                                       stage4 +
+                                       combinationtherapy, data=ici_melanoma)
+
+summary(cox_timetodeath)
+```
+
+**After adjusting for potential confounders for death (age, stage 4 cancer, type of ICI therapy) using Cox regression, we see that steroid-refractory ICI hepatitis does not appear to increase risk of death (HR 1.60, 95% CI 0.83-3.09, p=0.161)**
+
+**Finally, we sought to develop a prediction model to identify patients at high risk of developing steroid-refractory ICI hepatitis. For a clinical prediction rule, we decided to use a regression approach for interpretability instead of something like a random forest. There are several methods for variable selection that we could use, with one option being a backwards elimination approach with the final model being the one with the minimum Bayesian Information Criterion value. Lasso regression is a better option than any stepwise regression for variable selection purposes, including that it can estimate models where the number of potential predictors is relatively large compared to the number of observations.**
+
+**Here, we performed Lasso regression using an a priori list of potential predictors of steroid-refractory ICI hepatitis. This list overall represented variables thought to either be associated with a more "vulnerable" liver (in the case of patients with pre-existing liver disease, alcohol use, liver metastases) or with the severity of liver injury/inflammation . The "falt7" variable represents the ratio of ALT at day 7 after steroid treatment to ALT at day 0 (aka time of steroid initiation) and therefore represents the rate of liver enzyme improvement following steroid treatment, with the idea being that we may be able to identify steroid-refractory patients based on their rate of liver enzyme improvement with steroid treatment. The best lambda value was identified using 10-fold cross-validation. The dataset was divided into a training set (60%; for model selection) and a test set (40%; for internal model validation). Our dataset is relatively small (approximately 200 patients) and therefore a potentially better approach for internal validation would be to use the entire dataset for model selection and then perform bootstrapping or cross-validation to determine model error and measure optimism. We were not able to figure out how to do this internal validation with one of these methods for Lasso regression (there are packages that can do this for stepwise logistic regression but not as far as we could tell for Lasso/Ridge/elastic net regression).**
+
+
+```{r}
+###### Lasso regression from http://www.sthda.com/english/articles/36-classification-methods-essentials/149-penalized-logistic-regression-essentials-in-r-ridge-lasso-and-elastic-net/
+
+# Remove missing values from falt7 variable
+ici_nomissing <- ici %>% filter(!is.na(falt7))
+
+# Split data into training and test sets
+set.seed(456)
+training.samples <- ici_nomissing$refractory %>%
+  createDataPartition(p=0.7, list=FALSE)
+
+train.data <- ici_nomissing[training.samples, ]
+test.data <- ici_nomissing[-training.samples, ]
+
+# Creating matrix of predictors
+x <- model.matrix(refractory ~ liverdisease +
+                               livermets +
+                               falt7 +
+                               EtOH +
+                               combinationtherapy +
+                               immunecomplication, data=train.data)[, -1]
+
+y <- train.data$refractory
+
+# Find the best lambda using 10-fold cross-validation
+set.seed(456)
+cv.lasso <- cv.glmnet(x, y, alpha=1, family="binomial")
+
+plot(cv.lasso)
+
+cv.lasso$lambda.lse #### Should I use lamdba.min????
+
+# Fit the final model
+model <- glmnet(x, y, alpha=1, family = "binomial",
+                lambda = cv.lasso$lambda.1se)
+
+# Display regression coefficients
+coef(model)
+
+```
+
+**After a model was selected using Lasso regression, this model was then fit to the test data to determine the AUC (aka c-statistic). Cutoffs for high- and low-risk were determined based on 90% sensitivity and specificity, respectively, with intermediate-risk being in between those cutoffs.**
+
+
+```{r}
+# Predictions from model for train and test sets
+probabilities.train <- predict(model, newx=x, type="response") # Predictions for the train set
+
+test.x <- model.matrix(refractory ~ liverdisease +
+                               livermets +
+                               falt7 +
+                               EtOH +
+                               combinationtherapy +
+                               immunecomplication, data=test.data)[, -1]
+
+probabilities.test <- predict(model, newx=test.x, type="response") # Predictions for the test set
+
+# ROC curves
+roc_train <- roc(train.data$refractory, probabilities.train)
+
+plot(roc_train)
+
+roc_train
+
+roc_test <- roc(test.data$refractory, probabilities.test)
+
+plot(roc_test)
+
+roc_test
+
+# 90% Specificity (if less than this cutoff, consider "low-risk")
+predicted.classes.90spec <- ifelse(probabilities.test > 0.22, 1, 0)
+
+confusionMatrix(data=as.factor(predicted.classes.90spec), reference=as.factor(test.data$refractory))
+
+# 90% sensitivity (if greater than this cutoff, consider "high-risk")
+predicted.classes.90sens <- ifelse(probabilities.test > 0.47, 1, 0)
+
+confusionMatrix(data=as.factor(predicted.classes.90sens), reference=as.factor(test.data$refractory))
+
+mean(predicted.classes.90sens)*55 # Number of patients (11) above this cutoff who are "high-risk"
+
+mean(predicted.classes.90spec)*55 - mean(predicted.classes.90sens)*55 # Number of patients (21) who are "intermediate risk"
+```
+
+**The AUC for the model in the test data was 0.8114 (compared to the AUC in the training data, which was 0.91). A cutoff of >47% predicted probability of steroid-refractory disease was defined as high-risk and a cutoff of <22% predicted probability of steroid-refractory disease was defined as low-risk. This prediction model could potentially be used in the clinical setting to help physicians determine who should receive additional immunosuppressive therapy. Any patients who are classified as "high-risk" should likely received this additional therapy, while those who are intermediate-risk will need further discussion of risks vs benefits of escalation of immunosuppression.**
+
+
