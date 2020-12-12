@@ -290,6 +290,10 @@ mean(predicted.classes.90sens)*55 # Number of patients (11) above this cutoff wh
 mean(predicted.classes.90spec)*55 - mean(predicted.classes.90sens)*55 # Number of patients (21) who are "intermediate risk"
 ```
 
+**Through the variable selection process above, the lasso regression selected three variables to be included in the final model to predict steroid-refractory disease: presence of liver metastases, prior history of any irAE, and rate of ALT improvement in the first week of steroid treatment. The full equation for the prediction model is as follows:**
+
+**Log odds of steroid-refractory ICI hepatitis = -2.77 + 0.52*(1 if liver metastases present, 0 if not) + 2.63*(ALT on day 7 divided by ALT on day 0) + 0.46*(1 if prior history of any irAE, 0 if not)**
+
 **The AUC for the model in the test data was 0.8114 (compared to the AUC in the training data, which was 0.91). A cutoff of >47% predicted probability of steroid-refractory disease was defined as high-risk and a cutoff of <22% predicted probability of steroid-refractory disease was defined as low-risk. This prediction model could potentially be used in the clinical setting to help physicians determine who should receive additional immunosuppressive therapy. Any patients who are classified as "high-risk" should likely received this additional therapy, while those who are intermediate-risk will need further discussion of risks vs benefits of escalation of immunosuppression.**
 
 
