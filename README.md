@@ -10,5 +10,5 @@ Instructions:
 Data files:
 1. `icicombined.sas7bdat`
 
-Our website can be found [here](Example_website.com)
-Our screencast can be found [here](screencast.com)
+Our website can be found [here](https://sites.google.com/view/introtodatasciencefinalproject/home)
+Our screencast can be found [here](https://www.youtube.com/watch?v=w9mc4DM6TKc&feature=emb_title) as well as on our website where it is embedded
